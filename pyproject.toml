@@ -6,12 +6,13 @@ build-backend = "setuptools.build_meta"
 name = "idms-common-irods"
 license = { text = "EUPL-1.2" }
 dynamic = ["version"]
-requires-python = ">=3.10"
+requires-python = ">=3.12"
 description = "Utilities to work with IRODS components (AVUs, physical objects, etc.)"
 dependencies = [
     "idms-common-constants>=0.0.8",
     "python-irodsclient",
-    "APScheduler"
+    "APScheduler",
+    "typing-extensions>=4.16.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -19,12 +20,7 @@ where = ["src"]
 include = ["idms.common.irods*"]
 
 [tool.uv.sources]
-# only works for gitlab ci/cd during uv sync
-idms-common-constants = { index = "internal-gitlab" }
-
-[[tool.uv.index]]
-name = "internal-gitlab"
-url = "https://gitlab.rivm.nl/api/v4/projects/4682/packages/pypi/simple"
+idms-common-constants = { git = "https://github.com/rivm-syso/iDMS_common_constants", branch = "main" }
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
