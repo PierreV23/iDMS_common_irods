@@ -60,3 +60,5 @@ coverage.xml
 .coverage
 
 packages/constants/src/idms/common/constants/constants.py
+
+.direnv
