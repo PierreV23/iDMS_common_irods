@@ -11,6 +11,8 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from irods.session import iRODSSession
 from irods.version import __version__
 
+from idms.common.irods.irods_user import User
+
 def versiontuple(v):
     return tuple(map(int, (v.split("."))))
 
@@ -21,7 +23,7 @@ def create_session(envdata, user, use_pam=False):
 
     Args:
         envdata (dict): dict from IRODS_ENVS in config.py
-        user (WebUser): user to create a session for
+        user (WebUser): user to create a session for # TODO: this refers back to outside this package's scope, to ngsweb app.webuser
         use_pam (bool, optional): Indicate wether to do a native or PAM login. Defaults to False.
 
     Returns:
@@ -310,12 +312,12 @@ class MultiSessionManager():
             except Exception:
                 pass
  
-    def session(self, user):  #here we used flask.current_user!
+    def session(self, user: User):  #here we used flask.current_user!
         """ Return an irods session object
         for current_user
         """
         with self._lock:
-            environment = user.environment if hasattr(user, 'environment') else '__NONE__'
+            environment = user.env_key()
             mgr = self._managers.get(environment)
             if mgr:
                 return mgr.session(user)
@@ -334,11 +336,11 @@ class MultiSessionManager():
                 data.append(record | { 'Environment': env } )
         return data
 
-    def remove(self, user):
+    def remove(self, user: User):
         """Removes the session for user"""
         ...
         with self._lock:
-            if (manager := self._managers.get(user.environment)):
+            if (manager := self._managers.get(user.env_key())):
                 manager.remove(user)
                 
     def debug(self):
