@@ -13,6 +13,7 @@ dependencies = [
     "python-irodsclient",
     "APScheduler",
     "typing-extensions>=4.16.0",
+    "pydantic>=2.14.2",
 ]
 
 [tool.setuptools.packages.find]
@@ -21,6 +22,7 @@ include = ["idms.common.irods*"]
 
 [tool.uv.sources]
 idms-common-constants = { git = "https://github.com/rivm-syso/iDMS_common_constants", branch = "main" }
+python-irodsclient = { git = "https://github.com/PierreV23/python-irodsclient", branch = "irods-auth-scheme"}
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0"

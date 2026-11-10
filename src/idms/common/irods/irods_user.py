@@ -6,7 +6,7 @@ from typing import Generic, Hashable, Self, TypedDict, cast
 from typing_extensions import TypeVar
 
 import irods.auth
-from idms.common.irods.irods_config import IRODSConfig
+from idms.common.irods.irods_config import IRODSConfig, iRODSConfig
 from irods.auth.pam_password import AUTH_TTL_KEY
 from irods.exception import (
     CAT_INVALID_AUTHENTICATION,
@@ -29,9 +29,7 @@ def decrypt(encrypted: str):
 T = TypeVar("T", default=str)
 
 class User(Generic[T]):
-    # maybe rename environment to irods_environment?
-    # upstream `environment` can also mean iDMS related settings (db/external URLs)
-    environment: IRODSConfig # zone info / zone ssl config
+    irods_env: iRODSConfig # zone info / zone ssl config
     username: str
 
     # when is_pam == False, this is the real user's password
@@ -40,16 +38,16 @@ class User(Generic[T]):
     # this field should only be allowed to be stored in memory
     # TODO: irods 5.1.0 introduces a new authentication type `irods` which...
     # takes a native password but gives a native token back (like pam)
-    _encrypted_native_password: T
+    _encrypted_secret: T
 
     # so that classes inhereting this one can set up their own encryption if wanted
     _encrypt: Callable[[str], T] = cast("Callable[[str], T]", staticmethod(encrypt))
     _decrypt: Callable[[T], str] = cast("Callable[[T], str]", staticmethod(decrypt))
 
-    def __init__(self, environment: IRODSConfig, username: str, encrypted_native_password: T):
+    def __init__(self, environment: iRODSConfig, username: str, encrypted_secret: T):
         self.environment = environment
         self.username = username
-        self._encrypted_native_password = encrypted_native_password
+        self._encrypted_secret = encrypted_secret
         self._check_auth()
 
     @classmethod
@@ -95,7 +93,7 @@ class User(Generic[T]):
         env: IRODSConfig = {**self.environment, "authentication_scheme": "native"} # shallow copy
         ses = iRODSSession(
             user=self.username,
-            password=self._decrypt(self._encrypted_native_password),
+            password=self._decrypt(self._encrypted_secret),
             **env,
         )
         try:
@@ -111,7 +109,7 @@ class User(Generic[T]):
 
     @property
     def is_pam(self):
-        return self.environment.get('authentication_scheme', 'native') == "pam_password"
+        return self.environment.authentication_scheme == "pam_password"
 
 
     def env_key(self) -> Hashable:
@@ -177,7 +175,7 @@ if __name__ == '__main__':
     user = CustomUser.login(environment, "pamtestuser", "secret123")
     user._check_auth()
 
-    print(user._decrypt(user._encrypted_native_password))
+    print(user._decrypt(user._encrypted_secret))
 
     environment_native: IRODSConfig = {
         'host': 'res-irods91.researchlumc.nl',
@@ -190,6 +188,6 @@ if __name__ == '__main__':
     user = User.login(environment_native, "rods", "rods")
     user._check_auth()
 
-    print(user._decrypt(user._encrypted_native_password))
+    print(user._decrypt(user._encrypted_secret))
 
     print("all ok")
