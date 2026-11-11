@@ -44,19 +44,20 @@ class User(Generic[T]):
     _encrypt: Callable[[str], T] = cast("Callable[[str], T]", staticmethod(encrypt))
     _decrypt: Callable[[T], str] = cast("Callable[[T], str]", staticmethod(decrypt))
 
-    def __init__(self, environment: iRODSConfig, username: str, encrypted_secret: T):
-        self.environment = environment
+    pam_ttl: int | None = None
+
+    def __init__(self, irods_config: iRODSConfig, username: str, encrypted_secret: T):
+        self.irods_config = irods_config
         self.username = username
         self._encrypted_secret = encrypted_secret
         self._check_auth()
 
     @classmethod
-    def login(cls, environment: IRODSConfig, username: str, password: str) -> Self:
-        if environment.get("authentication_scheme", "native") == "pam_password":
+    def login(cls, irods_config: iRODSConfig, username: str, password: str) -> Self:
+        if irods_config.authentication_scheme == "pam_password":
             token = []
-            with iRODSSession(user=username, password=password, **environment) as ses:
+            with irods_config.session_pam(username, password) as ses:
                 ses.set_auth_option_for_scheme("pam_password", irods.auth.CLIENT_GET_REQUEST_RESULT, token) # write token
-                ses.set_auth_option_for_scheme("pam_password", irods.auth.STORE_PASSWORD_IN_MEMORY, True) # never write .irodsA
                 cls._pam_set_auth_options(ses)
 
                 assert ses.pool is not None # should never be None, irods session class fills this with a pool before end of __init__
@@ -66,17 +67,17 @@ class User(Generic[T]):
         else:
             native = password
 
-        user = cls(environment, username, cls._encrypt(native))
+        user = cls(irods_config, username, cls._encrypt(native))
         user._check_auth()
         return user
 
     @staticmethod
     def _pam_set_auth_options(ses: iRODSSession):
-        ses.set_auth_option_for_scheme("pam_password", AUTH_TTL_KEY, "24")  # token ttl in hours
+        ses.set_auth_option_for_scheme("pam_password", AUTH_TTL_KEY, str())  # token ttl in hours
 
     def _check_auth(self):
         with self.session() as ses:
-            self.__check_auth(ses, self.environment, self.username)
+            self.__check_auth(ses, self.irods_config, self.username)
 
     @staticmethod
     def __check_auth(ses: iRODSSession, environment: IRODSConfig, username: str):
@@ -90,14 +91,14 @@ class User(Generic[T]):
     def session(self) -> iRODSSession:
         AUTH_EXCEPTIONS = (CAT_PASSWORD_EXPIRED, CAT_INVALID_AUTHENTICATION, CAT_INVALID_USER)
 
-        env: IRODSConfig = {**self.environment, "authentication_scheme": "native"} # shallow copy
+        env: IRODSConfig = {**self.irods_config, "authentication_scheme": "native"} # shallow copy
         ses = iRODSSession(
             user=self.username,
             password=self._decrypt(self._encrypted_secret),
             **env,
         )
         try:
-            self.__check_auth(ses, self.environment, self.username)
+            self.__check_auth(ses, self.irods_config, self.username)
         except AUTH_EXCEPTIONS as e:
             ses.cleanup()
             # if auth fails here for a pam user, its the token failing
@@ -108,15 +109,15 @@ class User(Generic[T]):
         return ses
 
     @property
-    def is_pam(self):
-        return self.environment.authentication_scheme == "pam_password"
+    def authentication_scheme(self):
+        return self.irods_config.authentication_scheme
 
 
     def env_key(self) -> Hashable:
         # keep the item checks untill iRODSConfig becomes a strictly typed class
         # currently iDMS_web mixes in things like minilims_db among other things that should be in a non-irods env dict (or class)
         
-        return tuple(sorted(self.__sanitize_environment(self.environment).items()))
+        return tuple(sorted(self.__sanitize_environment(self.irods_config).items()))
 
     @staticmethod
     def __sanitize_environment(environment: IRODSConfig) -> IRODSConfig:

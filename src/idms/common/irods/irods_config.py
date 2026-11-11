@@ -1,20 +1,16 @@
 from copy import deepcopy
-import io
 from pathlib import Path
 from typing import Literal, TypedDict, cast
+
 from pydantic import BaseModel, ConfigDict
-from irods.session import iRODSAccount, iRODSSession
+
 import irods.auth
-
 from idms.common.irods.irods_exception import iRODSVersionMismatchError
-
-
-
-
-type AUTH_SCHEMES = Literal["native", "pam_password", "irods"]
+from irods.session import iRODSAccount, iRODSSession
 
 
 # if any field is missing, it can be added here with the same naming irods python client expects
+# only fields that pass directly into iRODSSession(*) should be in this model
 class iRODSConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -22,8 +18,8 @@ class iRODSConfig(BaseModel):
     zone: str
     port: int = 1247
 
-    # pam_interactive is only for CLIs
-    authentication_scheme: AUTH_SCHEMES = "native"
+    # authentication_scheme `irods` is only available on servers >5.1.0
+    authentication_scheme: Literal["native", "pam_password", "irods"] = "native"
     irods_client_server_negotiation: Literal["request_server_negotiation"] | None = None
     irods_client_server_policy: Literal["CS_NEG_REQUIRE", "CS_NEG_REFUSE", "CS_NEG_DONT_CARE"] | None = None
     irods_ssl_verify_server: Literal["none", "cert", "hostname"] | None = None
@@ -32,6 +28,9 @@ class iRODSConfig(BaseModel):
     irods_encryption_key_size: int | None = None
     irods_encryption_num_hash_rounds: int | None = None
     irods_encryption_salt_size: int | None = None
+
+    # helper functions:
+    # these functions never change the class and they always only output something that does not link back to this class
 
     def server_version(self):
         env = self.model_dump()
@@ -46,32 +45,34 @@ class iRODSConfig(BaseModel):
         *,
         password: str | None = None,
         token: str | None = None,
-        scheme: AUTH_SCHEMES | None = None,
+        scheme: Literal["native", "pam_password", "irods"] | None = None,
+        **kwargs,
     ) -> iRODSSession:
         scheme = scheme if scheme is not None else self.authentication_scheme
 
         if scheme != "irods" and password is None:
             raise ValueError(f"pass a password for auth scheme `{scheme}`")
-        elif (password is None) == (token is None):
-            raise ValueError(f"pass exactly one of password or token, {"neither was passed" if token is None else "both were passed"}")
+        elif (password is None) and (token is None):
+            raise ValueError(f"pass atleast one of password or token")
         elif scheme != "irods" and token is not None:
             raise ValueError("token can only be supplied with scheme `irods`")
 
-        kwargs = self.model_dump(exclude_none=True)
-        kwargs.pop("authentication_scheme")
-        print(kwargs)
+        env = self.model_dump(exclude_none=True)
+        env.pop("authentication_scheme")
 
         if password is not None:
             return iRODSSession(
                 user=username,
                 password=password,
                 authentication_scheme=scheme,
+                **env,
                 **kwargs
             )
         else: #token
             ses = iRODSSession(
                 user=username,
                 authentication_scheme=scheme,
+                **env,
                 **kwargs
             )
             ses.set_auth_option_for_scheme("irods", "session_token", token)
@@ -90,15 +91,18 @@ class iRODSConfig(BaseModel):
     def session_irods(self, username: str, *, irods_password: str | None = None, irods_token: str | None = None, scheme="irods") -> iRODSSession:
         if self.server_version() < (5, 1, 0):
             raise iRODSVersionMismatchError
-        
-        if (irods_password is None) == (irods_token is None):
-            raise ValueError("Only either of irods_password or irods_token should bet set")
+
+        # TODO: consider forcing either of the two rather than supporting both at the same time
+        if (irods_password is None) and (irods_token is None):
+            raise ValueError("Atleast either of irods_password or irods_token should bet set")
         
         if irods_password is not None:
             return self._session(username, password=irods_password, scheme="irods")
         else: # token
             return self._session(username, token=irods_token, scheme="irods")
 
+def session_get_account(ses: iRODSSession) -> iRODSAccount:
+    return cast(iRODSAccount, getattr(ses, "_iRODSSession__configured"))
 
 def get_pam_token(ses: iRODSSession, ttl_hours: int = 24*14) -> str:
     # token in this case means a temporary native password that can be used in place of the user's pam password
@@ -109,8 +113,7 @@ def get_pam_token(ses: iRODSSession, ttl_hours: int = 24*14) -> str:
     # .clone() is only shallow
     ses.auth_options_by_scheme = deepcopy(ses.auth_options_by_scheme)
 
-    account = cast(iRODSAccount, getattr(ses, "_iRODSSession__configured"))
-    if account.authentication_scheme != "pam_password":
+    if session_get_account(ses).authentication_scheme != "pam_password":
         raise ValueError("This is not a pam session")
     
     native_password_list: list[str] = []
@@ -123,11 +126,31 @@ def get_pam_token(ses: iRODSSession, ttl_hours: int = 24*14) -> str:
         ses.cleanup()
     return native_password_list[0]
 
-# def get_irods_token
-    
+# irods tokens ttl is defined server side
+def get_irods_token(ses: iRODSSession) -> str:
+    ses = ses.clone()
+    # .clone() is only shallow
+    ses.auth_options_by_scheme = deepcopy(ses.auth_options_by_scheme)
 
+    if session_get_account(ses).authentication_scheme != "irods":
+        raise ValueError("This is not an `irods` session")
+
+    irods_token_list: list[str] = []
+    ses.set_auth_option_for_scheme("irods", irods.auth.CLIENT_GET_REQUEST_RESULT, irods_token_list)
+    assert ses.pool is not None # gets set in iRODSSession.__init__, should never actually be None
+    try:
+        ses.pool.get_connection()
+    finally:
+        ses.cleanup()
+    return irods_token_list[0]
 
 if __name__ == '__main__':
+
+    def user_check(ses: iRODSSession):
+        account = session_get_account(ses)
+        ses.collections.get(f"/tempZone/home/{account.client_user}")
+        print("succes")
+
     class SSLConfig(TypedDict, total=False):
         irods_client_server_negotiation: str
         irods_client_server_policy: str
@@ -157,8 +180,6 @@ if __name__ == '__main__':
         **SSL_COMMON,
     }
 
-    env = iRODSConfig(**environment)
-
     native_user = "rods"
     native_pw = "rods"
 
@@ -166,12 +187,26 @@ if __name__ == '__main__':
     pam_pw = "secret123"
 
 
-    ses = env.session_pam(pam_user, pam_pw)
-    print(env.server_version())
-    print(cast(iRODSAccount, getattr(ses, "_iRODSSession__configured")).password)
-    print(get_pam_token(ses))
-    # ses = env.session_pam(pam_user, pam_pw)
-    print(get_pam_token(ses))
-    print(ses.pam_pw_negotiated)
-    print(ses.pam_pw_negotiated)
+    env_pam = iRODSConfig(**environment)
+    ses_pam = env_pam.session_pam(pam_user, pam_pw)
+    user_check(ses_pam)
+
+    pam_token = get_pam_token(ses_pam)
+    ses_pam_native = env_pam.session_native(pam_user, pam_token)
+    user_check(ses_pam_native)
+
+    _tmp = environment
+    _tmp["authentication_scheme"] = "irods"
+    env_irods = iRODSConfig(**_tmp)
+
+    ses_irods = env_irods.session_irods(native_user, irods_password=native_pw)
+    user_check(ses_irods)
+
+    irods_token = get_irods_token(ses_irods)
+    ses_irods_token = env_irods.session_irods(native_user, irods_token=irods_token)
+    user_check(ses_irods)
+
+
+
+
 
