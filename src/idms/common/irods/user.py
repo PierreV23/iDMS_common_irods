@@ -14,11 +14,12 @@ from irods.exception import (
     CAT_INVALID_AUTHENTICATION,
     CAT_INVALID_USER,
     CAT_PASSWORD_EXPIRED,
+    PAM_AUTH_PASSWORD_FAILED,
 )
 from irods.session import iRODSSession
 
 
-class TokenExpired(Exception):
+class UserAuthFailure(Exception):
     pass
 
 
@@ -43,6 +44,8 @@ class User(Generic[T]):
 
     pam_ttl: int | None = None
 
+    AUTH_EXCEPTIONS = (CAT_PASSWORD_EXPIRED, CAT_INVALID_AUTHENTICATION, CAT_INVALID_USER, AUTHENTICATION_ERROR, PAM_AUTH_PASSWORD_FAILED)
+
     def __init__(self, irods_config: iRODSConfig, username: str, encrypted_secret: T, *, check_auth = True):
         self.irods_config = irods_config
         self.username = username
@@ -58,20 +61,30 @@ class User(Generic[T]):
         secret = get_pam_token(ses)
         return secret
 
+    # same motivation as _login_pam
+    @staticmethod
+    def _login_irods(irods_config: iRODSConfig, username: str, password: str) -> str:
+        ses = irods_config.session_irods(username, irods_password=password)
+        secret = get_irods_token(ses)
+        return secret
+
     @classmethod
     def login(cls, irods_config: iRODSConfig, username: str, password: str) -> Self:
-        match irods_config.authentication_scheme:
-            case "pam_password":
-                secret = cls._login_pam(irods_config, username, password)
-            case "native":
-                secret = password
-            case "irods":
-                ses = irods_config.session_irods(username, irods_password=password)
-                secret = get_irods_token(ses)
-            case _:
-                raise UserUnsupportedScheme
+        try:
+            match irods_config.authentication_scheme:
+                case "pam_password":
+                    secret = cls._login_pam(irods_config, username, password)
+                case "native":
+                    secret = password
+                case "irods":
+                    secret = cls._login_irods(irods_config, username, password)
+                case _:
+                    raise UserUnsupportedScheme
 
-        user = cls(irods_config, username, cls._encrypt(secret))
+
+            user = cls(irods_config, username, cls._encrypt(secret))
+        except cls.AUTH_EXCEPTIONS as e:
+            raise UserAuthFailure(username) from e
         return user
 
     def _check_auth(self):
@@ -83,30 +96,26 @@ class User(Generic[T]):
         ses = self.irods_config.session_native(self.username, native_password=self._decrypt(self._encrypted_secret))
         return ses
 
-
+    def _session_irods(self) -> iRODSSession:
+        ses = self.irods_config.session_irods(self.username, irods_token=self._decrypt(self._encrypted_secret))
+        return ses
 
     def session(self) -> iRODSSession:
-        AUTH_EXCEPTIONS = (CAT_PASSWORD_EXPIRED, CAT_INVALID_AUTHENTICATION, CAT_INVALID_USER, AUTHENTICATION_ERROR)
-
         match self.irods_config.authentication_scheme:
             case "pam_password":
                 ses = self._session_pam()
             case "native":
                 ses = self.irods_config.session_native(self.username, native_password=self._decrypt(self._encrypted_secret))
             case "irods":
-                ses = self.irods_config.session_irods(self.username, irods_token=self._decrypt(self._encrypted_secret))
+                ses = self._session_irods()
             case _:
                 raise UserUnsupportedScheme
         
         try:
             check_auth(ses)
-        except AUTH_EXCEPTIONS as e:
+        except self.AUTH_EXCEPTIONS as e:
             ses.cleanup()
-            # if auth fails here for a pam or irods user, its the token failing
-            # if its a native user, the username or password could be incorrect
-            if self.is_pam:
-                raise TokenExpired(self.username) from e
-            raise # raises the original Exception again
+            raise UserAuthFailure(self.username) from e
         return ses
 
     @property
@@ -124,64 +133,3 @@ class User(Generic[T]):
     def env_key(self) -> Hashable:
         return tuple(sorted(self.irods_config.as_dict().items()))
 
-
-# example usage:
-if __name__ == '__main__':
-    def custom_encrypt(foo: str):
-        return ""
-    
-    class CustomUser(User):
-        # _encrypt = custom_encrypt
-        @staticmethod
-        def _pam_set_auth_options(ses: iRODSSession):
-            ses.set_auth_option_for_scheme("pam_password", AUTH_TTL_KEY, "1")
-
-    # this is just a helper for typechecking
-    class SSLConfig(TypedDict, total=False):
-        irods_client_server_negotiation: str
-        irods_client_server_policy: str
-        irods_ssl_ca_certificate_file: str | Path
-        irods_encryption_algorithm: str
-        irods_encryption_key_size: int
-        irods_encryption_num_hash_rounds: int
-        irods_encryption_salt_size: int
-        irods_ssl_verify_server: str
-
-    SSL_COMMON: SSLConfig = {
-        "irods_client_server_negotiation": "request_server_negotiation",
-        "irods_client_server_policy": "CS_NEG_REQUIRE",
-        "irods_ssl_ca_certificate_file": "/home/pierre/Documents/github_priv/internship-iRODS-Pierre/ssl/irods.crt",
-        "irods_encryption_algorithm": "AES-256-CBC",
-        "irods_encryption_key_size": 32,
-        "irods_encryption_num_hash_rounds": 16,
-        "irods_encryption_salt_size": 8,
-        "irods_ssl_verify_server": "none",
-    }
-
-    environment: IRODSConfig = {
-        'host': 'res-irods91.researchlumc.nl',
-        'zone': 'tempZone',
-        "authentication_scheme": "pam_password",
-        "port": 1247,
-        **SSL_COMMON,
-    }
-
-    user = CustomUser.login(environment, "pamtestuser", "secret123")
-    user._check_auth()
-
-    print(user._decrypt(user._encrypted_secret))
-
-    environment_native: IRODSConfig = {
-        'host': 'res-irods91.researchlumc.nl',
-        'zone': 'tempZone',
-        "authentication_scheme": "native",
-        "port": 1247,
-        **SSL_COMMON,
-    }
-
-    user = User.login(environment_native, "rods", "rods")
-    user._check_auth()
-
-    print(user._decrypt(user._encrypted_secret))
-
-    print("all ok")
