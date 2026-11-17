@@ -1,12 +1,13 @@
 import base64
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from pathlib import Path
-from typing import Generic, Hashable, Self, TypedDict, cast
+from typing import Generic, Self, TypedDict, cast
 
 from typing_extensions import TypeVar
 
-import irods.auth
-from idms.common.irods.irods_config import IRODSConfig, iRODSConfig
+from idms.common.irods.config import iRODSConfig
+from idms.common.irods.exception import UserUnsupportedScheme
+from idms.common.irods.session import check_auth, get_irods_token, get_pam_token
 from irods.auth.pam_password import AUTH_TTL_KEY
 from irods.exception import (
     CAT_INVALID_AUTHENTICATION,
@@ -14,6 +15,7 @@ from irods.exception import (
     CAT_PASSWORD_EXPIRED,
 )
 from irods.session import iRODSSession
+
 
 class TokenExpired(Exception):
     pass
@@ -32,12 +34,6 @@ class User(Generic[T]):
     irods_env: iRODSConfig # zone info / zone ssl config
     username: str
 
-    # when is_pam == False, this is the real user's password
-    # when is_pam == True, this is the "token" iRODS returns after authenticating pam
-    # encrypted in this case means the server side encrypts it
-    # this field should only be allowed to be stored in memory
-    # TODO: irods 5.1.0 introduces a new authentication type `irods` which...
-    # takes a native password but gives a native token back (like pam)
     _encrypted_secret: T
 
     # so that classes inhereting this one can set up their own encryption if wanted
@@ -46,90 +42,66 @@ class User(Generic[T]):
 
     pam_ttl: int | None = None
 
-    def __init__(self, irods_config: iRODSConfig, username: str, encrypted_secret: T):
+    def __init__(self, irods_config: iRODSConfig, username: str, encrypted_secret: T, *, check_auth = True):
         self.irods_config = irods_config
         self.username = username
         self._encrypted_secret = encrypted_secret
-        self._check_auth()
+        if check_auth:
+            self._check_auth()
 
     @classmethod
     def login(cls, irods_config: iRODSConfig, username: str, password: str) -> Self:
-        if irods_config.authentication_scheme == "pam_password":
-            token = []
-            with irods_config.session_pam(username, password) as ses:
-                ses.set_auth_option_for_scheme("pam_password", irods.auth.CLIENT_GET_REQUEST_RESULT, token) # write token
-                cls._pam_set_auth_options(ses)
+        match irods_config.authentication_scheme:
+            case "pam_password":
+                ses = irods_config.session_pam(username, password)
+                secret = get_pam_token(ses)
+            case "native":
+                secret = password
+            case "irods":
+                ses = irods_config.session_irods(username, irods_password=password)
+                secret = get_irods_token(ses)
+            case _:
+                raise UserUnsupportedScheme
 
-                assert ses.pool is not None # should never be None, irods session class fills this with a pool before end of __init__
-                with ses.pool.get_connection():
-                    pass
-            native = token[0]
-        else:
-            native = password
-
-        user = cls(irods_config, username, cls._encrypt(native))
-        user._check_auth()
+        user = cls(irods_config, username, cls._encrypt(secret))
         return user
-
-    @staticmethod
-    def _pam_set_auth_options(ses: iRODSSession):
-        ses.set_auth_option_for_scheme("pam_password", AUTH_TTL_KEY, str())  # token ttl in hours
 
     def _check_auth(self):
         with self.session() as ses:
-            self.__check_auth(ses, self.irods_config, self.username)
-
-    @staticmethod
-    def __check_auth(ses: iRODSSession, environment: IRODSConfig, username: str):
-        # underlying irodssession class always assign ses.pool. The typehint is merely wrong
-        # asserting rather than noqa ignoring the type error in case underlying logic ever changes
-        assert ses.pool is not None
-        with ses.pool.get_connection():
-            pass
-        ses.collections.get(f"/{environment.get('zone')}/home/{username}")
+            check_auth(ses)
 
     def session(self) -> iRODSSession:
         AUTH_EXCEPTIONS = (CAT_PASSWORD_EXPIRED, CAT_INVALID_AUTHENTICATION, CAT_INVALID_USER)
 
-        env: IRODSConfig = {**self.irods_config, "authentication_scheme": "native"} # shallow copy
-        ses = iRODSSession(
-            user=self.username,
-            password=self._decrypt(self._encrypted_secret),
-            **env,
-        )
+        match self.irods_config.authentication_scheme:
+            case "pam_password" | "native":
+                ses = self.irods_config.session_native(self.username, native_password=self._decrypt(self._encrypted_secret))
+            case "irods":
+                ses = self.irods_config.session_irods(self.username, irods_token=self._decrypt(self._encrypted_secret))
+            case _:
+                raise UserUnsupportedScheme
+        
         try:
-            self.__check_auth(ses, self.irods_config, self.username)
+            check_auth(ses)
         except AUTH_EXCEPTIONS as e:
             ses.cleanup()
             # if auth fails here for a pam user, its the token failing
             # if its a native user, the username or password could be incorrect
             if self.is_pam:
                 raise TokenExpired(self.username) from e
-            raise
+            raise # raises the original Exception again
         return ses
 
     @property
     def authentication_scheme(self):
         return self.irods_config.authentication_scheme
 
+    @property
+    def is_pam(self):
+        return self.authentication_scheme == "pam_password"
 
     def env_key(self) -> Hashable:
-        # keep the item checks untill iRODSConfig becomes a strictly typed class
-        # currently iDMS_web mixes in things like minilims_db among other things that should be in a non-irods env dict (or class)
-        
-        return tuple(sorted(self.__sanitize_environment(self.irods_config).items()))
-
-    @staticmethod
-    def __sanitize_environment(environment: IRODSConfig) -> IRODSConfig:
-        # tightly related to .env_key
-        # this function will become redundant once the comment in env_key is fixed
-        # this function is also called from .session, because there the env is used as well
-        return {
-            k:v
-            for k, v in environment.items()
-            if (k.startswith("irods_")) or (k in {"host", "zone", "port", "authentication_scheme"})
-        } # type: ignore
-    
+        return tuple(sorted(self.irods_config.as_dict().items()))
 
 
 # example usage:

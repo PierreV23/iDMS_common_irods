@@ -11,61 +11,61 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from irods.session import iRODSSession
 from irods.version import __version__
 
-from idms.common.irods.irods_user import User
+from idms.common.irods.user import User
 
 def versiontuple(v):
     return tuple(map(int, (v.split("."))))
 
 irodsclient_before_1_1_4 = versiontuple(__version__) < versiontuple('1.1.4')
 
-def create_session(envdata, user, use_pam=False):
-    """Create an iRODS session for <user>
+# def create_session(envdata, user, use_pam=False):
+#     """Create an iRODS session for <user>
 
-    Args:
-        envdata (dict): dict from IRODS_ENVS in config.py
-        user (WebUser): user to create a session for # TODO: this refers back to outside this package's scope, to ngsweb app.webuser
-        use_pam (bool, optional): Indicate wether to do a native or PAM login. Defaults to False.
+#     Args:
+#         envdata (dict): dict from IRODS_ENVS in config.py
+#         user (WebUser): user to create a session for # TODO: this refers back to outside this package's scope, to ngsweb app.webuser
+#         use_pam (bool, optional): Indicate wether to do a native or PAM login. Defaults to False.
 
-    Returns:
-        iRODSSession: iRODSSession object
+#     Returns:
+#         iRODSSession: iRODSSession object
         
-    If use_pam is True, will login user with <user.username, user.password> 
-    If false, will use <user.username, user.native_password>
-    """    
-    context = ssl._create_unverified_context(
-        purpose=ssl.Purpose.SERVER_AUTH,
-        cafile=None,
-        capath=None,
-        cadata=None
-    )
+#     If use_pam is True, will login user with <user.username, user.password> 
+#     If false, will use <user.username, user.native_password>
+#     """    
+#     context = ssl._create_unverified_context(
+#         purpose=ssl.Purpose.SERVER_AUTH,
+#         cafile=None,
+#         capath=None,
+#         cadata=None
+#     )
 
-    ssl_settings = {
-        'irods_client_server_negotiation': 'request_server_negotiation',
-        'irods_client_server_policy': 'CS_NEG_REQUIRE',
-        'irods_ssl_ca_certificate_file': envdata.get('certfile', 'dummy'),
-        'irods_encryption_algorithm': 'AES-256-CBC',
-        'irods_encryption_key_size': 32,
-        'irods_encryption_num_hash_rounds': 16,
-        'irods_encryption_salt_size': 8,
-        'ssl_context': context
-    }
+#     ssl_settings = {
+#         'irods_client_server_negotiation': 'request_server_negotiation',
+#         'irods_client_server_policy': 'CS_NEG_REQUIRE',
+#         'irods_ssl_ca_certificate_file': envdata.get('certfile', 'dummy'),
+#         'irods_encryption_algorithm': 'AES-256-CBC',
+#         'irods_encryption_key_size': 32,
+#         'irods_encryption_num_hash_rounds': 16,
+#         'irods_encryption_salt_size': 8,
+#         'ssl_context': context
+#     }
 
-    # Creating an iRODS does not imply a connection is set up.
-    if use_pam:
-        session_password = user.password
-        authentication_scheme = 'pam_password'
-    else:
-        session_password = user.native_password
-        authentication_scheme = 'native'        
-    return iRODSSession(
-        host=envdata.get('host'),
-        port=1247,
-        user=user.username,
-        password=session_password,
-        zone=envdata.get('zone'),
-        authentication_scheme=authentication_scheme,
-        refresh_time=300,
-        **ssl_settings)
+#     # Creating an iRODS does not imply a connection is set up.
+#     if use_pam:
+#         session_password = user.password
+#         authentication_scheme = 'pam_password'
+#     else:
+#         session_password = user.native_password
+#         authentication_scheme = 'native'        
+#     return iRODSSession(
+#         host=envdata.get('host'),
+#         port=1247,
+#         user=user.username,
+#         password=session_password,
+#         zone=envdata.get('zone'),
+#         authentication_scheme=authentication_scheme,
+#         refresh_time=300,
+#         **ssl_settings)
 
 def objfromlist(li, a, v):
     for i in li:
