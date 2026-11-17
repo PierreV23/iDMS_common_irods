@@ -61,7 +61,7 @@ class iRODSConfig(BaseModel):
         elif scheme != "irods" and token is not None:
             raise ValueError("token can only be supplied with scheme `irods`")
 
-        env = self.model_dump(exclude_none=True)
+        env = self.as_dict()
         env.pop("authentication_scheme")
 
         if password is not None:
@@ -104,68 +104,6 @@ class iRODSConfig(BaseModel):
             return self._session(username, password=irods_password, scheme="irods")
         else: # token
             return self._session(username, token=irods_token, scheme="irods")
-
-if __name__ == '__main__':
-
-    def user_check(ses: iRODSSession):
-        account = session_get_account(ses)
-        ses.collections.get(f"/tempZone/home/{account.client_user}")
-        print("succes")
-
-    class SSLConfig(TypedDict, total=False):
-        irods_client_server_negotiation: str
-        irods_client_server_policy: str
-        irods_ssl_ca_certificate_file: str | Path
-        irods_encryption_algorithm: str
-        irods_encryption_key_size: int
-        irods_encryption_num_hash_rounds: int
-        irods_encryption_salt_size: int
-        irods_ssl_verify_server: str
-
-    SSL_COMMON: SSLConfig = {
-        "irods_client_server_negotiation": "request_server_negotiation",
-        "irods_client_server_policy": "CS_NEG_REQUIRE",
-        "irods_ssl_ca_certificate_file": "/home/pierre/Documents/github_priv/internship-iRODS-Pierre/ssl/irods.crt",
-        "irods_encryption_algorithm": "AES-256-CBC",
-        "irods_encryption_key_size": 32,
-        "irods_encryption_num_hash_rounds": 16,
-        "irods_encryption_salt_size": 8,
-        "irods_ssl_verify_server": "none",
-    }
-
-    environment = {
-        'host': 'res-irods91.researchlumc.nl',
-        'zone': 'tempZone',
-        "authentication_scheme": "pam_password",
-        "port": 1247,
-        **SSL_COMMON,
-    }
-
-    native_user = "rods"
-    native_pw = "rods"
-
-    pam_user = "pamtestuser"
-    pam_pw = "secret123"
-
-
-    env_pam = iRODSConfig(**environment)
-    ses_pam = env_pam.session_pam(pam_user, pam_pw)
-    user_check(ses_pam)
-
-    pam_token = get_pam_token(ses_pam)
-    ses_pam_native = env_pam.session_native(pam_user, pam_token)
-    user_check(ses_pam_native)
-
-    _tmp = environment
-    _tmp["authentication_scheme"] = "irods"
-    env_irods = iRODSConfig(**_tmp)
-
-    ses_irods = env_irods.session_irods(native_user, irods_password=native_pw)
-    user_check(ses_irods)
-
-    irods_token = get_irods_token(ses_irods)
-    ses_irods_token = env_irods.session_irods(native_user, irods_token=irods_token)
-    user_check(ses_irods)
 
 
 

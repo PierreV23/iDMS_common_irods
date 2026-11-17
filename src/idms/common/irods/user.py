@@ -10,6 +10,7 @@ from idms.common.irods.exception import UserUnsupportedScheme
 from idms.common.irods.session import check_auth, get_irods_token, get_pam_token
 from irods.auth.pam_password import AUTH_TTL_KEY
 from irods.exception import (
+    AUTHENTICATION_ERROR,
     CAT_INVALID_AUTHENTICATION,
     CAT_INVALID_USER,
     CAT_PASSWORD_EXPIRED,
@@ -49,12 +50,19 @@ class User(Generic[T]):
         if check_auth:
             self._check_auth()
 
+    # overwriting this method in a parent class can add functionality to use 
+    # the user's password as secret rather than the native token
+    @staticmethod
+    def _login_pam(irods_config: iRODSConfig, username: str, password: str) -> str:
+        ses = irods_config.session_pam(username, password)
+        secret = get_pam_token(ses)
+        return secret
+
     @classmethod
     def login(cls, irods_config: iRODSConfig, username: str, password: str) -> Self:
         match irods_config.authentication_scheme:
             case "pam_password":
-                ses = irods_config.session_pam(username, password)
-                secret = get_pam_token(ses)
+                secret = cls._login_pam(irods_config, username, password)
             case "native":
                 secret = password
             case "irods":
@@ -70,11 +78,20 @@ class User(Generic[T]):
         with self.session() as ses:
             check_auth(ses)
 
+    # same reasoning as _login_pam
+    def _session_pam(self) -> iRODSSession:
+        ses = self.irods_config.session_native(self.username, native_password=self._decrypt(self._encrypted_secret))
+        return ses
+
+
+
     def session(self) -> iRODSSession:
-        AUTH_EXCEPTIONS = (CAT_PASSWORD_EXPIRED, CAT_INVALID_AUTHENTICATION, CAT_INVALID_USER)
+        AUTH_EXCEPTIONS = (CAT_PASSWORD_EXPIRED, CAT_INVALID_AUTHENTICATION, CAT_INVALID_USER, AUTHENTICATION_ERROR)
 
         match self.irods_config.authentication_scheme:
-            case "pam_password" | "native":
+            case "pam_password":
+                ses = self._session_pam()
+            case "native":
                 ses = self.irods_config.session_native(self.username, native_password=self._decrypt(self._encrypted_secret))
             case "irods":
                 ses = self.irods_config.session_irods(self.username, irods_token=self._decrypt(self._encrypted_secret))
@@ -85,7 +102,7 @@ class User(Generic[T]):
             check_auth(ses)
         except AUTH_EXCEPTIONS as e:
             ses.cleanup()
-            # if auth fails here for a pam user, its the token failing
+            # if auth fails here for a pam or irods user, its the token failing
             # if its a native user, the username or password could be incorrect
             if self.is_pam:
                 raise TokenExpired(self.username) from e
@@ -99,6 +116,10 @@ class User(Generic[T]):
     @property
     def is_pam(self):
         return self.authentication_scheme == "pam_password"
+
+    @property
+    def is_irods(self):
+        return self.authentication_scheme == "irods"
 
     def env_key(self) -> Hashable:
         return tuple(sorted(self.irods_config.as_dict().items()))
