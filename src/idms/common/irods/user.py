@@ -154,3 +154,7 @@ class User(Generic[T]):
     @final
     def __hash__(self):
         return hash(self._uniq_key())
+
+    @final
+    def __eq__(self, other):
+        return isinstance(other, User) and self._uniq_key() == other._uniq_key()
