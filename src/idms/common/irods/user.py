@@ -1,9 +1,10 @@
 import base64
 from collections.abc import Callable, Hashable
+import hashlib
 from pathlib import Path
-from typing import Generic, Self, TypedDict, cast
+from typing import Generic, Self, TypedDict, cast, final, overload
 
-from typing_extensions import TypeVar
+from typing_extensions import Literal, TypeVar
 
 from idms.common.irods.config import iRODSConfig
 from idms.common.irods.exception import UserUnsupportedScheme
@@ -51,7 +52,7 @@ class User(Generic[T]):
         self.username = username
         self._encrypted_secret = encrypted_secret
         if check_auth:
-            self._check_auth()
+            self.check_auth()
 
     # overwriting this method in a parent class can add functionality to use 
     # the user's password as secret rather than the native token
@@ -87,9 +88,23 @@ class User(Generic[T]):
             raise UserAuthFailure(username) from e
         return user
 
-    def _check_auth(self):
-        with self.session() as ses:
+
+    @overload
+    def check_auth(self, reuse_ses: Literal[True]) -> iRODSSession: ...
+    @overload
+    def check_auth(self, reuse_ses: Literal[False] = False) -> None: ...
+    @overload
+    def check_auth(self, reuse_ses: bool) -> iRODSSession | None: ...
+    def check_auth(self, reuse_ses: bool = False) -> iRODSSession | None:
+        ses = self.session()
+        try:
             check_auth(ses)
+        except:
+            ses.cleanup()
+            raise
+        if reuse_ses:
+            return ses
+        ses.cleanup()
 
     # same reasoning as _login_pam
     def _session_pam(self) -> iRODSSession:
@@ -111,11 +126,6 @@ class User(Generic[T]):
             case _:
                 raise UserUnsupportedScheme
         
-        try:
-            check_auth(ses)
-        except self.AUTH_EXCEPTIONS as e:
-            ses.cleanup()
-            raise UserAuthFailure(self.username) from e
         return ses
 
     @property
@@ -130,6 +140,17 @@ class User(Generic[T]):
     def is_irods(self):
         return self.authentication_scheme == "irods"
 
-    def env_key(self) -> Hashable:
+    def _env_key(self) -> Hashable:
         return tuple(sorted(self.irods_config.as_dict().items()))
 
+    def _secret_fingerprint(self) -> str:
+        return hashlib.sha256(self._decrypt(self._encrypted_secret).encode()).hexdigest()
+
+    # always keep fingerprint in the key
+    def _uniq_key(self) -> tuple[Hashable, ...]:
+        return (self._env_key(), self.username, self._secret_fingerprint())
+
+    # don't overwrite this func, for special functionality edit _uniq_key
+    @final
+    def __hash__(self):
+        return hash(self._uniq_key())

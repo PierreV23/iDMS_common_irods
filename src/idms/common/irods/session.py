@@ -6,6 +6,7 @@ import irods.auth
 from irods.session import Pool, iRODSAccount, iRODSSession
 
 from idms.common.irods.exception import iRODSSessionNonePool
+from irods.connection import Connection, NetworkException
 
 
 def session_get_account(ses: iRODSSession) -> iRODSAccount:
@@ -59,3 +60,18 @@ def assert_pool(ses: iRODSSession) -> Pool:
 def check_auth(ses: iRODSSession):
     with assert_pool(ses).get_connection():
         pass
+
+def trim_idle(ses: iRODSSession, keep = 1):
+    pool = assert_pool(ses)
+    with pool._lock:
+        p_idle: set[Connection] = pool.idle
+        idle = sorted(p_idle, key=lambda c: c.last_used_time, reverse=True)
+        trim = idle[keep:]
+        pool.idle.difference_update(trim)
+    
+    for conn in trim:
+        try:
+            conn.disconnect()
+        except NetworkException:
+            pass
+    return len(trim)
