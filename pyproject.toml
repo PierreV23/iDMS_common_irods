@@ -11,7 +11,6 @@ description = "Utilities to work with IRODS components (AVUs, physical objects, 
 dependencies = [
     "idms-common-constants>=0.0.8",
     "python-irodsclient",
-    "APScheduler",
     "typing-extensions>=4.16.0",
     "pydantic>=2.14.2",
 ]
