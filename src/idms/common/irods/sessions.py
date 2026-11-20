@@ -72,7 +72,7 @@ class SessionManager:
                 self._session = None
 
 class UserManager(metaclass=_SingletonMeta):
-    def __init__(self, idle_timeout: int = 1 * 3600, trim_period: int = 5 * 60, start_loop = False):
+    def __init__(self, idle_timeout: float = 1 * 3600, trim_period: float = 5 * 60, start_loop = False):
         self.idle_timeout = idle_timeout
         self.trim_period = trim_period
         self._users: dict[tuple, SessionManager] = {}

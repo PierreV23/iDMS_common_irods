@@ -99,6 +99,9 @@ class User(Generic[T]):
         ses = self.session()
         try:
             check_auth(ses)
+        except self.AUTH_EXCEPTIONS as e:
+            ses.cleanup()
+            raise UserAuthFailure(self.username) from e
         except:
             ses.cleanup()
             raise
