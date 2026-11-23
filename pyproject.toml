@@ -19,12 +19,8 @@ where = ["src"]
 include = ["idms.common.irods*"]
 
 [tool.uv.sources]
-# only works for gitlab ci/cd during uv sync
-idms-common-constants = { index = "internal-gitlab" }
-
-[[tool.uv.index]]
-name = "internal-gitlab"
-url = "https://gitlab.rivm.nl/api/v4/projects/4682/packages/pypi/simple"
+idms-common-constants = { git = "https://github.com/rivm-syso/iDMS_common_constants", branch = "main" }
+python-irodsclient = { git = "https://github.com/PierreV23/python-irodsclient", branch = "irods-auth-scheme"}
 
 [tool.setuptools_scm]
 fallback_version = "0.0.0"
