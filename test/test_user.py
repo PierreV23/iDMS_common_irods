@@ -21,16 +21,8 @@ class StorePasswordUser(User):
     def _login_pam(irods_config: iRODSConfig, username: str, password: str) -> str:
         return password
 
-    @staticmethod
-    def _login_irods(irods_config: iRODSConfig, username: str, password: str) -> str:
-        return password
-
     def _session_pam(self) -> iRODSSession:
         ses = self.irods_config.session_pam(self.username, pam_password=self._decrypt(self._encrypted_secret))
-        return ses
-
-    def _session_irods(self) -> iRODSSession:
-        ses = self.irods_config.session_irods(self.username, irods_password=self._decrypt(self._encrypted_secret))
         return ses
 
 
@@ -44,11 +36,6 @@ def test_login_native(native_config: iRODSConfig, native_creds):
 @pytest.mark.irods
 def test_login_pam(pam_config: iRODSConfig, pam_creds):
     user = User.login(pam_config, *pam_creds)
-    user.check_auth()
-
-@pytest.mark.irods
-def test_login_irods(irods_config: iRODSConfig, irods_creds):
-    user = User.login(irods_config, *irods_creds)
     user.check_auth()
 
 @pytest.mark.irods
@@ -90,22 +77,9 @@ def test_pam_wrong_password(pam_config: iRODSConfig, pam_creds):
         User.login(pam_config, username, "wrong-password")
 
 @pytest.mark.irods
-def test_irods_wrong_password(irods_config: iRODSConfig, irods_creds):
-    username, _ = irods_creds
-    with pytest.raises(UserAuthFailure):
-        User.login(irods_config, username, "wrong-password")
-
-@pytest.mark.irods
 def test_pam_bad_token(pam_config: iRODSConfig, pam_creds):
     username, _ = pam_creds
     user = User(pam_config, username, User._encrypt("not-a-token"), check_auth=False)
-    with pytest.raises(UserAuthFailure):
-        user.check_auth()
-
-@pytest.mark.irods
-def test_irods_bad_token(irods_config: iRODSConfig, irods_creds):
-    username, _ = irods_creds
-    user = User(irods_config, username, User._encrypt("not-a-token"), check_auth=False)
     with pytest.raises(UserAuthFailure):
         user.check_auth()
 
@@ -123,12 +97,6 @@ def test_store_password_pam(pam_config: iRODSConfig, pam_creds):
     assert user._decrypt(user._encrypted_secret) == password
 
 @pytest.mark.irods
-def test_store_password_irods(irods_config: iRODSConfig, irods_creds):
-    username, password = irods_creds
-    user = StorePasswordUser.login(irods_config, username, password)
-    assert user._decrypt(user._encrypted_secret) == password
-
-@pytest.mark.irods
 def test_store_password_pam_wrong_password(pam_config: iRODSConfig, pam_creds):
     username, _ = pam_creds
     with pytest.raises(UserAuthFailure):
@@ -137,7 +105,7 @@ def test_store_password_pam_wrong_password(pam_config: iRODSConfig, pam_creds):
 
 # offline
 
-def offline_user(scheme: Literal["native", "pam_password", "irods"] = "native", host="localhost", username="rods", secret="x") -> User:
+def offline_user(scheme: Literal["native", "pam_password"] = "native", host="localhost", username="rods", secret="x") -> User:
     config = iRODSConfig(host=host, zone="tempZone", authentication_scheme=scheme)
     return User(config, username, User._encrypt(secret), check_auth=False)
 
@@ -146,12 +114,11 @@ def unsupported_config() -> iRODSConfig:
     return iRODSConfig.model_construct(host="localhost", zone="tempZone", authentication_scheme="foobar")
 
 @pytest.mark.unit
-@pytest.mark.parametrize("scheme", ["native", "pam_password", "irods"])
+@pytest.mark.parametrize("scheme", ["native", "pam_password"])
 def test_scheme_properties(scheme):
     user = offline_user(scheme)
     assert user.authentication_scheme == scheme
     assert user.is_pam == (scheme == "pam_password")
-    assert user.is_irods == (scheme == "irods")
 
 @pytest.mark.unit
 def test_login_unsupported_scheme():

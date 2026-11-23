@@ -1,14 +1,6 @@
-import importlib.util
-
 import pytest
 
 from idms.common.irods.config import iRODSConfig
-
-HAS_IRODS_AUTH = importlib.util.find_spec("irods.auth.irods") is not None
-
-requires_irods_auth = pytest.mark.skipif(
-    not HAS_IRODS_AUTH, reason="python-irodsclient lacks the `irods` auth scheme"
-)
 
 SSL = {
     "irods_client_server_negotiation": "request_server_negotiation",
@@ -44,14 +36,3 @@ def pam_config():
 @pytest.fixture()
 def pam_creds():
     return "pamtestuser", "secret123"
-
-@pytest.fixture()
-def irods_config():
-    config = iRODSConfig(**BASE, authentication_scheme="irods")
-    if config.server_version() < (5, 1, 0):
-        pytest.skip("needs iRODS server >= 5.1.0")
-    return config
-
-@pytest.fixture()
-def irods_creds():
-    return "rods", "rods"

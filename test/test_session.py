@@ -4,7 +4,7 @@ from irods.session import iRODSSession
 
 from idms.common.irods.config import iRODSConfig
 from idms.common.irods.exception import iRODSSessionNonePool
-from idms.common.irods.session import assert_pool, check_auth, get_irods_token, get_pam_token, trim_idle
+from idms.common.irods.session import assert_pool, check_auth, get_pam_token, trim_idle
 
 
 def offline_session() -> iRODSSession:
@@ -59,11 +59,6 @@ def test_trim_idle_ignores_network_error(native_config: iRODSConfig, native_cred
 def test_get_pam_token_rejects_native_session():
     with offline_session() as ses, pytest.raises(ValueError):
         get_pam_token(ses)
-
-@pytest.mark.unit
-def test_get_irods_token_rejects_native_session():
-    with offline_session() as ses, pytest.raises(ValueError):
-        get_irods_token(ses)
 
 @pytest.mark.unit
 def test_assert_pool():

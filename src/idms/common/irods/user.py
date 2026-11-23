@@ -7,9 +7,8 @@ from typing_extensions import Self, TypeVar
 
 from idms.common.irods.config import iRODSConfig
 from idms.common.irods.exception import UserUnsupportedScheme
-from idms.common.irods.session import check_auth, get_irods_token, get_pam_token
+from idms.common.irods.session import check_auth, get_pam_token
 from irods.exception import (
-    AUTHENTICATION_ERROR,
     CAT_INVALID_AUTHENTICATION,
     CAT_INVALID_USER,
     CAT_PASSWORD_EXPIRED,
@@ -43,7 +42,7 @@ class User(Generic[T]):
 
     pam_ttl: int | None = None
 
-    AUTH_EXCEPTIONS = (CAT_PASSWORD_EXPIRED, CAT_INVALID_AUTHENTICATION, CAT_INVALID_USER, AUTHENTICATION_ERROR, PAM_AUTH_PASSWORD_FAILED)
+    AUTH_EXCEPTIONS = (CAT_PASSWORD_EXPIRED, CAT_INVALID_AUTHENTICATION, CAT_INVALID_USER, PAM_AUTH_PASSWORD_FAILED)
 
     def __init__(self, irods_config: iRODSConfig, username: str, encrypted_secret: T, *, check_auth = True):
         self.irods_config = irods_config
@@ -60,13 +59,6 @@ class User(Generic[T]):
         secret = get_pam_token(ses)
         return secret
 
-    # same motivation as _login_pam
-    @staticmethod
-    def _login_irods(irods_config: iRODSConfig, username: str, password: str) -> str:
-        ses = irods_config.session_irods(username, irods_password=password)
-        secret = get_irods_token(ses)
-        return secret
-
     @classmethod
     def login(cls, irods_config: iRODSConfig, username: str, password: str) -> Self:
         try:
@@ -75,8 +67,6 @@ class User(Generic[T]):
                     secret = cls._login_pam(irods_config, username, password)
                 case "native":
                     secret = password
-                case "irods":
-                    secret = cls._login_irods(irods_config, username, password)
                 case _:
                     raise UserUnsupportedScheme
 
@@ -112,18 +102,12 @@ class User(Generic[T]):
         ses = self.irods_config.session_native(self.username, native_password=self._decrypt(self._encrypted_secret))
         return ses
 
-    def _session_irods(self) -> iRODSSession:
-        ses = self.irods_config.session_irods(self.username, irods_token=self._decrypt(self._encrypted_secret))
-        return ses
-
     def session(self) -> iRODSSession:
         match self.irods_config.authentication_scheme:
             case "pam_password":
                 ses = self._session_pam()
             case "native":
                 ses = self.irods_config.session_native(self.username, native_password=self._decrypt(self._encrypted_secret))
-            case "irods":
-                ses = self._session_irods()
             case _:
                 raise UserUnsupportedScheme
         
@@ -136,10 +120,6 @@ class User(Generic[T]):
     @property
     def is_pam(self):
         return self.authentication_scheme == "pam_password"
-
-    @property
-    def is_irods(self):
-        return self.authentication_scheme == "irods"
 
     def _env_key(self) -> Hashable:
         return tuple(sorted(self.irods_config.as_dict().items()))

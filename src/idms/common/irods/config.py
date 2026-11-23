@@ -5,7 +5,6 @@ from typing import Literal, TypedDict, cast
 from pydantic import BaseModel, ConfigDict
 
 import irods.auth
-from idms.common.irods.exception import iRODSVersionMismatchError
 from idms.common.irods.session import session_get_account
 from irods.session import iRODSAccount, iRODSSession
 
@@ -19,8 +18,7 @@ class iRODSConfig(BaseModel):
     zone: str
     port: int = 1247
 
-    # authentication_scheme `irods` is only available on servers >5.1.0
-    authentication_scheme: Literal["native", "pam_password", "irods"] = "native"
+    authentication_scheme: Literal["native", "pam_password"] = "native"
     irods_client_server_negotiation: Literal["request_server_negotiation"] | None = None
     irods_client_server_policy: Literal["CS_NEG_REQUIRE", "CS_NEG_REFUSE", "CS_NEG_DONT_CARE"] | None = None
     irods_ssl_verify_server: Literal["none", "cert", "hostname"] | None = None
@@ -47,40 +45,22 @@ class iRODSConfig(BaseModel):
         self,
         username: str,
         *,
-        password: str | None = None,
-        token: str | None = None,
-        scheme: Literal["native", "pam_password", "irods"] | None = None,
+        password: str,
+        scheme: Literal["native", "pam_password"] | None = None,
         **kwargs,
     ) -> iRODSSession:
         scheme = scheme if scheme is not None else self.authentication_scheme
 
-        if scheme != "irods" and password is None:
-            raise ValueError(f"pass a password for auth scheme `{scheme}`")
-        elif (password is None) and (token is None):
-            raise ValueError(f"pass atleast one of password or token")
-        elif scheme != "irods" and token is not None:
-            raise ValueError("token can only be supplied with scheme `irods`")
-
         env = self.as_dict()
         env.pop("authentication_scheme")
 
-        if password is not None:
-            return iRODSSession(
-                user=username,
-                password=password,
-                authentication_scheme=scheme,
-                **env,
-                **kwargs
-            )
-        else: #token
-            ses = iRODSSession(
-                user=username,
-                authentication_scheme=scheme,
-                **env,
-                **kwargs
-            )
-            ses.set_auth_option_for_scheme("irods", "session_token", token)
-            return ses
+        return iRODSSession(
+            user=username,
+            password=password,
+            authentication_scheme=scheme,
+            **env,
+            **kwargs
+        )
 
     def session_native(self, username: str, native_password: str) -> iRODSSession:
         if self.authentication_scheme not in ("native", "pam_password"):
@@ -91,21 +71,3 @@ class iRODSConfig(BaseModel):
         if self.authentication_scheme != "pam_password":
             raise ValueError(f"Attempted to create a pam session for authentication scheme `{self.authentication_scheme}`")
         return self._session(username, password=pam_password, scheme="pam_password")
-
-    def session_irods(self, username: str, *, irods_password: str | None = None, irods_token: str | None = None, scheme="irods") -> iRODSSession:
-        if self.server_version() < (5, 1, 0):
-            raise iRODSVersionMismatchError
-
-        # TODO: consider forcing either of the two rather than supporting both at the same time
-        if (irods_password is None) and (irods_token is None):
-            raise ValueError("Atleast either of irods_password or irods_token should bet set")
-        
-        if irods_password is not None:
-            return self._session(username, password=irods_password, scheme="irods")
-        else: # token
-            return self._session(username, token=irods_token, scheme="irods")
-
-
-
-
-

@@ -34,24 +34,6 @@ def get_pam_token(ses: iRODSSession, ttl_hours: int = 24*14) -> str:
         ses.cleanup()
     return native_password_list[0]
 
-# irods tokens ttl is defined server side
-def get_irods_token(ses: iRODSSession) -> str:
-    ses = ses.clone()
-    # .clone() is only shallow
-    ses.auth_options_by_scheme = deepcopy(ses.auth_options_by_scheme)
-
-    if session_get_account(ses).authentication_scheme != "irods":
-        raise ValueError("This is not an `irods` session")
-
-    irods_token_list: list[str] = []
-    ses.set_auth_option_for_scheme("irods", irods.auth.CLIENT_GET_REQUEST_RESULT, irods_token_list)
-    assert ses.pool is not None # gets set in iRODSSession.__init__, should never actually be None
-    try:
-        ses.pool.get_connection()
-    finally:
-        ses.cleanup()
-    return irods_token_list[0]
-
 def assert_pool(ses: iRODSSession) -> Pool:
     if ses.pool is None:
         raise iRODSSessionNonePool
